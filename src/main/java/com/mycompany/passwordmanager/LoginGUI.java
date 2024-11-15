@@ -9,11 +9,13 @@ import java.io.BufferedWriter;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import javax.swing.JOptionPane;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
-import javax.swing.JOptionPane;
 
 /**
  *
@@ -40,47 +42,60 @@ public class LoginGUI extends javax.swing.JFrame {
     @SuppressWarnings("unchecked")
 
     private void loadUserData() {
-        userDatabase = new HashMap<>();
-        try (BufferedReader reader = new BufferedReader(new FileReader("user_data.txt"))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                String[] parts = line.split(":");
-                if (parts.length == 2) {
-                    String username = parts[0];
-                    String hashedPassword = parts[1];
-                    userDatabase.put(username, hashedPassword);
-                }
+    userDatabase = new HashMap<>();
+    try (BufferedReader reader = new BufferedReader(new FileReader("user_data.txt"))) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+            String[] parts = line.split(":");
+            if (parts.length == 3) { // Username, Salt, and Hashed Password
+                String username = parts[0];
+                String salt = parts[1];
+                String hashedPassword = parts[2];
+                userDatabase.put(username, salt + ":" + hashedPassword);
             }
-        } catch (IOException e) {
-            e.printStackTrace();
         }
+    } catch (IOException e) {
+        e.printStackTrace();
     }
+}
 
     private void saveUserData() {
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter("user_data.txt"))) {
-            for (Map.Entry<String, String> entry : userDatabase.entrySet()) {
-                writer.write(entry.getKey() + ":" + entry.getValue());
+    try (BufferedWriter writer = new BufferedWriter(new FileWriter("user_data.txt"))) {
+        for (Map.Entry<String, String> entry : userDatabase.entrySet()) {
+            String username = entry.getKey();
+            String[] parts = entry.getValue().split(":");
+            if (parts.length == 2) {
+                String salt = parts[0];
+                String hashedPassword = parts[1];
+                writer.write(username + ":" + salt + ":" + hashedPassword);
                 writer.newLine();
             }
-        } catch (IOException e) {
-            e.printStackTrace();
         }
+    } catch (IOException e) {
+        e.printStackTrace();
     }
+}
 
-    private String hashPassword(String password) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] hashedPassword = md.digest(password.getBytes());
-            StringBuilder sb = new StringBuilder();
-            for (byte b : hashedPassword) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
-        } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
+    private String hashPassword(String password, byte[] salt) {
+    try {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        md.update(salt);
+        byte[] hashedPassword = md.digest(password.getBytes());
+        StringBuilder sb = new StringBuilder();
+        for (byte b : hashedPassword) {
+            sb.append(String.format("%02x", b));
         }
-        return null;
+        return sb.toString();
+    } catch (NoSuchAlgorithmException e) {
+        e.printStackTrace();
     }
+    return null;
+}
+    private byte[] generateSalt() {
+    byte[] salt = new byte[16];
+    new SecureRandom().nextBytes(salt);
+    return salt;
+}
 
     // <editor-fold defaultstate="collapsed" desc="Generated Code">//GEN-BEGIN:initComponents
     private void initComponents() {
@@ -237,17 +252,18 @@ public class LoginGUI extends javax.swing.JFrame {
     private void createAccountBtnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_createAccountBtnActionPerformed
         // TODO add your handling code here:
         String username = createAccountUsername.getText();
-        String password = new String(createAccountPassword.getPassword());
+    String password = new String(createAccountPassword.getPassword());
 
-        if (userDatabase.containsKey(username)) {
-            JOptionPane.showMessageDialog(this, "Username already exists.");
-        } else {
-            // Hash the password before storing it
-            String hashedPassword = hashPassword(password);
-            userDatabase.put(username, hashedPassword);
-            saveUserData();
-            JOptionPane.showMessageDialog(this, "Account created successfully!");
-        }
+    if (userDatabase.containsKey(username)) {
+        JOptionPane.showMessageDialog(this, "Username already exists.");
+    } else {
+        byte[] salt = generateSalt();
+        String saltBase64 = Base64.getEncoder().encodeToString(salt);
+        String hashedPassword = hashPassword(password, salt);
+        userDatabase.put(username, saltBase64 + ":" + hashedPassword);
+        saveUserData();
+        JOptionPane.showMessageDialog(this, "Account created successfully!");
+    }
     }//GEN-LAST:event_createAccountBtnActionPerformed
 
     private void signInUsernameActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_signInUsernameActionPerformed
@@ -263,23 +279,30 @@ public class LoginGUI extends javax.swing.JFrame {
     String username = signInUsername.getText();
     String password = new String(signInPassword.getPassword());
 
-    // Hash the entered password to compare with the stored hashed password
-    String hashedPassword = hashPassword(password);
+    if (userDatabase.containsKey(username)) {
+        String[] parts = userDatabase.get(username).split(":");
+        if (parts.length == 2) {
+            byte[] storedSalt = Base64.getDecoder().decode(parts[0]);
+            String storedHash = parts[1];
+            String inputHash = hashPassword(password, storedSalt);
 
-    if (userDatabase.containsKey(username) && userDatabase.get(username).equals(hashedPassword)) {
-        JOptionPane.showMessageDialog(this, "Login successful!");
+            if (storedHash.equals(inputHash)) {
+                JOptionPane.showMessageDialog(this, "Login successful!");
 
-        try {
-            // Initialize PasswordManager with a master password (could be derived from the login password or set separately)
-            PasswordManager passwordManager = new PasswordManager("MyMasterPassword"); // Replace with dynamic or user-defined master password if needed
-            new MainGUI(passwordManager).setVisible(true);  // Pass PasswordManager to MainGUI
-            this.dispose(); // Close LoginGUI
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Error initializing password manager: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                try {
+                    // Initialize PasswordManager with a master password
+                    PasswordManager passwordManager = new PasswordManager(password); 
+                    new MainGUI(passwordManager).setVisible(true); 
+                    this.dispose(); 
+                } catch (Exception e) {
+                    JOptionPane.showMessageDialog(this, "Error initializing password manager: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                }
+                return;
+            }
         }
-    } else {
-        JOptionPane.showMessageDialog(this, "Invalid username or password.");
     }
+    JOptionPane.showMessageDialog(this, "Invalid username or password.");
+
     }//GEN-LAST:event_signInBtnActionPerformed
 
     private void createAccountPasswordActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_createAccountPasswordActionPerformed
